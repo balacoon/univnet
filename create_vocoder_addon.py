@@ -6,10 +6,10 @@ compatible with balacoon_backend
 """
 import argparse
 import logging
+import math
 import os
 from typing import Tuple, Union
 
-import math
 import matplotlib.pylab as plt
 import msgpack
 import soundfile
@@ -42,6 +42,11 @@ def parse_args():
         "--work-dir",
         default="./work_dir",
         help="Directory to put intermediate files to",
+    )
+    ap.add_argument(
+        "--omit-generator",
+        action="store_true",
+        help="If provided, generator is not stored to addon",
     )
     ap.add_argument(
         "--wav", help="If specified, runs test analysis synthesis with traced model"
@@ -196,12 +201,18 @@ def main():
 
     # finally put all the exported models into the addon
     # TODO use balacoon_backend for addon field names
-    addon = {"id": "vocoder", "sampling_rate": config.audio.sampling_rate, "rate_ratio": math.prod(config.gen.strides),
-             "needs_noise": True, "noise_dimension": generator.noise_dim}
+    addon = {
+        "id": "vocoder",
+        "sampling_rate": config.audio.sampling_rate,
+        "rate_ratio": math.prod(config.gen.strides),
+        "needs_noise": True,
+        "noise_dimension": generator.noise_dim,
+    }
     with open(stft_path, "rb") as fp:
         addon["analyzer"] = fp.read()
-    with open(generator_path, "rb") as fp:
-        addon["synthesizer"] = fp.read()
+    if not args.omit_generator:
+        with open(generator_path, "rb") as fp:
+            addon["synthesizer"] = fp.read()
     with open(args.out, "wb") as fp:
         msgpack.dump([addon], fp)
     logging.info("Saved addon for balacoon_backend to {}".format(args.out))
