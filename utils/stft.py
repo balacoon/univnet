@@ -96,6 +96,11 @@ class TacotronSTFT(torch.nn.Module):
 
         return spec
 
+    def forward(self, y: torch.Tensor) -> torch.Tensor:
+        """Forwards mel-spectrogram computation
+        """
+        return self.mel_spectrogram(y)
+
     def spectral_normalize_torch(self, magnitudes):
         output = self.dynamic_range_compression_torch(magnitudes)
         return output
