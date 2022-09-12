@@ -8,8 +8,9 @@ MAX_WAV_VALUE = 32768.0
 
 class Generator(nn.Module):
     """UnivNet Generator"""
-    def __init__(self, hp):
+    def __init__(self, hp, squeeze_output: bool = False):
         super(Generator, self).__init__()
+        self.squeeze_output = squeeze_output
         self.mel_channel = hp.audio.n_mel_channels
         self.noise_dim = hp.gen.noise_dim
         self.hop_length = hp.audio.hop_length
@@ -55,7 +56,8 @@ class Generator(nn.Module):
             z = res_block(z, c)             # (B, c_g, L * s_0 * ... * s_i)
 
         z = self.conv_post(z)               # (B, 1, L * 256)
-
+        if self.squeeze_output:
+            z = z.squeeze(1)
         return z
 
     def eval(self, inference=False):
