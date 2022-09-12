@@ -115,11 +115,13 @@ class LVCBlock(torch.nn.Module):
         self.cond_hop_length = cond_hop_length
         self.conv_layers = len(dilations)
         self.conv_kernel_size = conv_kernel_size
+        self.in_channels = in_channels
+        self.out_channels = 2 * in_channels
 
         self.kernel_predictor = KernelPredictor(
             cond_channels=cond_channels,
-            conv_in_channels=in_channels,
-            conv_out_channels=2 * in_channels, 
+            conv_in_channels=self.in_channels,
+            conv_out_channels=self.out_channels,
             conv_layers=len(dilations),
             conv_kernel_size=conv_kernel_size,
             kpnet_hidden_channels=kpnet_hidden_channels,
@@ -156,15 +158,17 @@ class LVCBlock(torch.nn.Module):
         
         x = self.convt_pre(x)               # (B, c_g, stride * L')
         kernels, bias = self.kernel_predictor(c)
+        # split across layers dim
+        kernels_lst = torch.split(kernels, 1, 1)
+        kernels_lst = [torch.squeeze(x, dim=1) for x in kernels_lst]  # (B, 2 * c_g, c_g, kernel_size, cond_length)
+        bias_lst = torch.split(bias, 1, 1)
+        bias_lst = [torch.squeeze(x, dim=1) for x in bias_lst]  # (B, 2 * c_g, cond_length)
 
-        for i, conv in enumerate(self.conv_blocks):
+        for conv, k, b in zip(self.conv_blocks, kernels_lst, bias_lst):
             output = conv(x)                # (B, c_g, stride * L')
-            
-            k = kernels[:, i, :, :, :, :]   # (B, 2 * c_g, c_g, kernel_size, cond_length)
-            b = bias[:, i, :, :]            # (B, 2 * c_g, cond_length)
-
             output = self.location_variable_convolution(output, k, b, hop_size=self.cond_hop_length)    # (B, 2 * c_g, stride * L'): LVC
-            x = x + torch.sigmoid(output[ :, :in_channels, :]) * torch.tanh(output[:, in_channels:, :]) # (B, c_g, stride * L'): GAU
+            for_sigm, for_tanh = torch.split(output, in_channels, 1)
+            x = x + torch.sigmoid(for_sigm) * torch.tanh(for_tanh) # (B, c_g, stride * L'): GAU
         
         return x
     
@@ -180,11 +184,8 @@ class LVCBlock(torch.nn.Module):
         Returns:
             (Tensor): the output sequence after performing local convolution. (batch, out_channels, in_length).
         '''
-        batch, _, in_length = x.shape
-        batch, _, out_channels, kernel_size, kernel_length = kernel.shape
-        assert in_length == (kernel_length * hop_size), "length of (x, kernel) is not matched"
-
-        padding = dilation * int((kernel_size - 1) / 2)
+        batch = x.size(0)
+        padding = dilation * int((self.conv_kernel_size - 1) // 2)
         x = F.pad(x, (padding, padding), 'constant', 0)     # (batch, in_channels, in_length + 2*padding)
         x = x.unfold(2, hop_size + 2 * padding, hop_size)   # (batch, in_channels, kernel_length, hop_size + 2*padding)
 
@@ -193,13 +194,13 @@ class LVCBlock(torch.nn.Module):
         x = x.unfold(3, dilation, dilation)     # (batch, in_channels, kernel_length, (hop_size + 2*padding)/dilation, dilation)
         x = x[:, :, :, :, :hop_size]          
         x = x.transpose(3, 4)                   # (batch, in_channels, kernel_length, dilation, (hop_size + 2*padding)/dilation)  
-        x = x.unfold(4, kernel_size, 1)         # (batch, in_channels, kernel_length, dilation, _, kernel_size)
+        x = x.unfold(4, self.conv_kernel_size, 1)         # (batch, in_channels, kernel_length, dilation, _, kernel_size)
 
         o = torch.einsum('bildsk,biokl->bolsd', x, kernel)
         o = o.to(memory_format=torch.channels_last_3d)
         bias = bias.unsqueeze(-1).unsqueeze(-1).to(memory_format=torch.channels_last_3d)
         o = o + bias
-        o = o.contiguous().view(batch, out_channels, -1)
+        o = o.contiguous().view(batch, self.out_channels, -1)
 
         return o
 
