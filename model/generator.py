@@ -4,13 +4,15 @@ from omegaconf import OmegaConf
 
 from .lvcnet import LVCBlock
 
-MAX_WAV_VALUE = 32768.0
+MAX_WAV_VALUE = 32767.0
 
 class Generator(nn.Module):
     """UnivNet Generator"""
-    def __init__(self, hp, squeeze_output: bool = False):
+    def __init__(self, hp, squeeze_output: bool = False, output_short: bool = False, half_precision: bool = False):
         super(Generator, self).__init__()
         self.squeeze_output = squeeze_output
+        self.output_short = output_short
+        self.half_precision = half_precision
         self.mel_channel = hp.audio.n_mel_channels
         self.noise_dim = hp.gen.noise_dim
         self.hop_length = hp.audio.hop_length
@@ -32,13 +34,14 @@ class Generator(nn.Module):
                     kpnet_conv_size=kpnet_conv_size
                 )
             )
-        
+       
+        padding_mode = "zeros" if self.half_precision else "reflect"
         self.conv_pre = \
-            nn.utils.weight_norm(nn.Conv1d(hp.gen.noise_dim, channel_size, 7, padding=3, padding_mode='reflect'))
+            nn.utils.weight_norm(nn.Conv1d(hp.gen.noise_dim, channel_size, 7, padding=3, padding_mode=padding_mode))
 
         self.conv_post = nn.Sequential(
             nn.LeakyReLU(hp.gen.lReLU_slope),
-            nn.utils.weight_norm(nn.Conv1d(channel_size, 1, 7, padding=3, padding_mode='reflect')),
+            nn.utils.weight_norm(nn.Conv1d(channel_size, 1, 7, padding=3, padding_mode=padding_mode)),
             nn.Tanh(),
         )
 
@@ -49,6 +52,9 @@ class Generator(nn.Module):
             z (Tensor): the noise sequence (batch, noise_dim, in_length)
         
         '''
+        if self.half_precision:
+            z = z.half()
+            c = c.half()
         z = self.conv_pre(z)                # (B, c_g, L)
 
         for res_block in self.res_stack:
@@ -58,6 +64,9 @@ class Generator(nn.Module):
         z = self.conv_post(z)               # (B, 1, L * 256)
         if self.squeeze_output:
             z = z.squeeze(1)
+        if self.output_short:
+            z = z * MAX_WAV_VALUE
+            z = z.short()
         return z
 
     def eval(self, inference=False):

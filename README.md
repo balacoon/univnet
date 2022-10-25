@@ -188,3 +188,29 @@ Papers
 Datasets
 
 - [LibriTTS](https://openslr.org/60/)
+
+## Export
+
+In the fork, a script to trace and export vocoder and melspec extractor are added.
+Latter allows to analyze batch input of audio (batch x samples_num) into acoustic features
+(batch x 100 x frames_num), where `frames_num = samples_num / 256`. Former performs
+opposite operation, creating audio from acoustic features. Additionally it takes
+noise of shape (batch x 64 x frames_num) as an input.
+
+In order to export, first you need to install univnet dependencies, download checkpoint
+
+```bash
+conda create -n univnet python=3.8
+pip install -r requirements.txt
+# univnet itself is not installable
+# get model from https://github.com/clementruhm/univnet#pre-trained-model
+```
+
+Then simply run the tracing script. Changes to sources made to eliminate warnings.
+Warning about different outputs in traced/non-traced versions can be ignored.
+Trace for gpu in case you want to use via jit, for cpu for balacoon_backend.
+Jit files are uploaded to https://huggingface.co/balacoon/pretrained
+
+```bash
+CUDA_VISIBLE_DEVICES=1 python3 create_balacoon_pretrained.py --ckpt univ_c32_0288.pt --out-dir traced_on_gpu --use-gpu
+```
