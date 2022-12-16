@@ -9,8 +9,8 @@ import logging
 import os
 
 import matplotlib.pylab as plt
-import soundfile
 import torch
+import soundfile
 from omegaconf import OmegaConf
 
 from model.generator import Generator
@@ -69,7 +69,7 @@ def main():
     # run created model on example
     example_wav = "arctic_a0001.wav"
     logging.info("Extracting melspec from real audio")
-    audio_real, sample_rate = soundfile.read(example_wav)
+    audio_real, sample_rate = soundfile.read(example_wav, dtype="int16")
     assert (
         sample_rate == config.audio.sampling_rate
     ), "Provided audio file should have {} sample rate".format(

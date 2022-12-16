@@ -78,16 +78,19 @@ class TacotronSTFT(torch.nn.Module):
 
         return spec
 
-    def mel_spectrogram(self, y):
+    def mel_spectrogram(self, y: torch.Tensor) -> torch.Tensor:
         """Computes mel-spectrograms from a batch of waves
         PARAMS
         ------
-        y: Variable(torch.FloatTensor) with shape (B, T) in range [-1, 1]
+        y: Variable(torch.ShortTensor) with shape (B, T) in range [-MIN_SHORT_INT, MAX_SHORT_INT]
 
         RETURNS
         -------
         mel_output: torch.FloatTensor of shape (B, n_mel_channels, T)
         """
+        # convert short to float samples in range (-1; 1)
+        float_type = torch.float16 if self.half_precision else torch.float32
+        y = y.type(float_type) / 32768.0  # to range (-1, 1)
 
         padding = torch.zeros(y.size(0), int((self.n_fft - self.hop_size) / 2), device=y.device, dtype=y.dtype)
         y = torch.cat((padding, y, padding), dim=1)
