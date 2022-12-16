@@ -20,21 +20,16 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-import math
-import os
-import random
 import torch
 import torch.utils.data
-import numpy as np
-from librosa.util import normalize
-from scipy.io.wavfile import read
 from librosa.filters import mel as librosa_mel_fn
+from nnAudio.features.stft import STFT
 
 
 class TacotronSTFT(torch.nn.Module):
     def __init__(self, filter_length=1024, hop_length=256, win_length=1024,
                  n_mel_channels=80, sampling_rate=22050, mel_fmin=0.0,
-                 mel_fmax=None, center=False, device='cpu'):
+                 mel_fmax=None, center=False, device='cpu', half=False):
         super(TacotronSTFT, self).__init__()
         self.n_mel_channels = n_mel_channels
         self.sampling_rate = sampling_rate
@@ -44,12 +39,27 @@ class TacotronSTFT(torch.nn.Module):
         self.fmin = mel_fmin
         self.fmax = mel_fmax
         self.center = center
+        self.half_precision = half
+        self.pad_mode = "zeros" if self.half_precision else "reflect"
+        if self.half_precision:
+            # uses hann window by default
+            self.stft = STFT(
+                n_fft=self.n_fft,
+                win_length=self.win_size,
+                hop_length=self.hop_size,
+                center=self.center,
+                output_format="Magnitude",
+                fmax=self.fmax,
+                sr=self.sampling_rate,
+            )
 
         mel = librosa_mel_fn(
             sampling_rate, filter_length, n_mel_channels, mel_fmin, mel_fmax)
 
         mel_basis = torch.from_numpy(mel).float().to(device)
+        mel_basis = mel_basis.half() if self.half_precision else mel_basis
         hann_window = torch.hann_window(win_length).to(device)
+        hann_window = hann_window.half() if self.half_precision else hann_window
 
         self.register_buffer('mel_basis', mel_basis)
         self.register_buffer('hann_window', hann_window)
@@ -60,10 +70,10 @@ class TacotronSTFT(torch.nn.Module):
 
         y = torch.nn.functional.pad(y.unsqueeze(1),
                                     (int((self.n_fft - self.hop_size) / 2), int((self.n_fft - self.hop_size) / 2)),
-                                    mode='reflect')
+                                    mode=self.pad_mode)
         y = y.squeeze(1)
         spec = torch.stft(y, self.n_fft, hop_length=self.hop_size, win_length=self.win_size, window=self.hann_window,
-                          center=self.center, pad_mode='reflect', normalized=False, onesided=True)
+                          center=self.center, pad_mode=self.pad_mode, normalized=False, onesided=True)
         spec = torch.norm(spec, p=2, dim=-1)
 
         return spec
@@ -78,18 +88,24 @@ class TacotronSTFT(torch.nn.Module):
         -------
         mel_output: torch.FloatTensor of shape (B, n_mel_channels, T)
         """
-        #assert(torch.min(y.data) >= -1)
-        #assert(torch.max(y.data) <= 1)
 
-        y = torch.nn.functional.pad(y.unsqueeze(1),
-                                    (int((self.n_fft - self.hop_size) / 2), int((self.n_fft - self.hop_size) / 2)),
-                                    mode='reflect')
-        y = y.squeeze(1)
-
-        spec = torch.stft(y, self.n_fft, hop_length=self.hop_size, win_length=self.win_size, window=self.hann_window,
-                          center=self.center, pad_mode='reflect', normalized=False, onesided=True)
-
-        spec = torch.sqrt(spec.pow(2).sum(-1) + (1e-9))
+        padding = torch.zeros(y.size(0), int((self.n_fft - self.hop_size) / 2), device=y.device, dtype=y.dtype)
+        y = torch.cat((padding, y, padding), dim=1)
+        if self.half_precision:
+            spec = self.stft(y)  # batch_size x fft_size/2 + 1 x frames
+        else:
+            spec = torch.stft(
+                y,
+                self.n_fft,
+                hop_length=self.hop_size,
+                win_length=self.win_size,
+                window=self.hann_window,
+                center=self.center,
+                pad_mode=self.pad_mode,
+                normalized=False,
+                onesided=True
+            )
+            spec = torch.sqrt(spec.pow(2).sum(-1) + (1e-9))
 
         spec = torch.matmul(self.mel_basis, spec)
         spec = self.spectral_normalize_torch(spec)

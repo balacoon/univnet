@@ -208,9 +208,9 @@ pip install -r requirements.txt
 
 Then simply run the tracing script. Changes to sources made to eliminate warnings.
 Warning about different outputs in traced/non-traced versions can be ignored.
-Trace for gpu in case you want to use via jit, for cpu for balacoon_backend.
-Jit files are uploaded to https://huggingface.co/balacoon/pretrained
+Pretrained model is used in data pre-processing, to allow biggest throughput, 
+the model is traced for GPU in half precision.
 
 ```bash
-CUDA_VISIBLE_DEVICES=1 python3 create_balacoon_pretrained.py --ckpt univ_c32_0288.pt --out-dir traced_on_gpu --use-gpu
+CUDA_VISIBLE_DEVICES=1 python3 trace.py --ckpt univ_c32_0288.pt --cuda --out-dir traced_gpu_half/ --half
 ```

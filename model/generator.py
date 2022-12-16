@@ -52,9 +52,6 @@ class Generator(nn.Module):
             z (Tensor): the noise sequence (batch, noise_dim, in_length)
         
         '''
-        if self.half_precision:
-            z = z.half()
-            c = c.half()
         z = self.conv_pre(z)                # (B, c_g, L)
 
         for res_block in self.res_stack:

@@ -1,17 +1,14 @@
 """
 Copyright 2022 Balacoon
 
-Script to export pretrained univnet as an addon,
-compatible with balacoon_backend
+Script to trace pretrained univnet,
+compatible with balacoon data preparation
 """
 import argparse
 import logging
-import math
 import os
-from typing import Tuple, Union
 
 import matplotlib.pylab as plt
-import msgpack
 import soundfile
 import torch
 from omegaconf import OmegaConf
@@ -22,7 +19,7 @@ from utils.stft import TacotronSTFT
 
 def parse_args():
     ap = argparse.ArgumentParser(
-        description="Traces univnet for balacoon/pretrained and packs addon for balacoon_backend"
+        description="Traces univnet"
     )
     ap.add_argument(
         "--ckpt",
@@ -35,7 +32,8 @@ def parse_args():
         default="./exported",
         help="Directory to put exported files to",
     )
-    ap.add_argument("--use-gpu", action="store_true", help="Whether to trace on GPU")
+    ap.add_argument("--cuda", action="store_true", help="Whether to trace on GPU")
+    ap.add_argument("--half", action="store_true", help="Whether to trace in half precision")
     args = ap.parse_args()
     return args
 
@@ -44,7 +42,7 @@ def main():
     args = parse_args()
     logging.basicConfig(level=logging.INFO)
     os.makedirs(args.out_dir, exist_ok=True)
-    device = torch.device("cuda" if args.use_gpu else "cpu")
+    device = torch.device("cuda" if args.cuda else "cpu")
 
     # load checkpoint
     loaded = torch.load(args.ckpt)
@@ -62,12 +60,13 @@ def main():
         config.audio.mel_fmax,
         center=False,
         device=device,
+        half=args.half,
     ).to(device)
+    stft = stft.half() if args.half else stft
     stft.eval()
     logging.info("Created mel extractor")
 
     # run created model on example
-    melspec_real = None
     example_wav = "arctic_a0001.wav"
     logging.info("Extracting melspec from real audio")
     audio_real, sample_rate = soundfile.read(example_wav)
@@ -81,8 +80,10 @@ def main():
     ).unsqueeze(
         0
     )  # (batch x samples)
+    audio_real = audio_real.cuda() if args.cuda else audio_real
+    audio_real = audio_real.half() if args.half else audio_real
     melspec_real = stft(audio_real)
-    melspec_real_npy = melspec_real.cpu().detach().numpy()
+    melspec_real_npy = melspec_real.cpu().detach().float().numpy()
     assert (
         len(melspec_real_npy.shape) == 3
     ), "expected output of melspec extractor is 3d"
@@ -95,13 +96,13 @@ def main():
     plt.show()
 
     # export model to a file
-    stft_path = os.path.join(args.out_dir, "univnet_melspec_extractor.jit")
+    stft_path = os.path.join(args.out_dir, "univnet_analysis.jit")
     stft_traced = torch.jit.trace(stft, audio_real)
     stft_traced.save(stft_path)
     logging.info("Saved traced melspec extractor to {}".format(stft_path))
 
     # create waveform generator
-    generator = Generator(config, squeeze_output=True, output_short=True, half_precision=False)
+    generator = Generator(config, squeeze_output=True, output_short=True, half_precision=args.half)
     # rename parameters to have stand-alone generator
     saved_state_dict = loaded["model_g"]
     new_state_dict = {}
@@ -113,6 +114,7 @@ def main():
             new_state_dict[k] = v
     generator.load_state_dict(new_state_dict)
     generator = generator.to(device)
+    generator = generator.half() if args.half else generator
     generator.eval(inference=True)
     logging.info("Created audio generator")
 
@@ -130,26 +132,10 @@ def main():
     soundfile.write(resynt_path, samples_real, config.audio.sampling_rate)
 
     # example of input to waveform generator: melspec and noise
-    generator_path = os.path.join(args.out_dir, "univnet_vocoder.jit")
+    generator_path = os.path.join(args.out_dir, "univnet_synthesis.jit")
     generator_traced = torch.jit.trace(generator, [melspec_real, noise_real])
     generator_traced.save(generator_path)
     logging.info("Saved traced audio generator to {}".format(generator_path))
-
-    # finally put all the exported models into the addon
-    # TODO use balacoon_backend for addon field names
-    addon = {
-        "id": "vocoder",
-        "sampling_rate": config.audio.sampling_rate,
-        "rate_ratio": math.prod(config.gen.strides),
-        "needs_noise": True,
-        "noise_dimension": generator.noise_dim,
-    }
-    with open(generator_path, "rb") as fp:
-        addon["synthesizer"] = fp.read()
-    addon_path = os.path.join(args.out_dir, "univnet_vocoder.addon")
-    with open(addon_path, "wb") as fp:
-        msgpack.dump([addon], fp)
-    logging.info("Saved addon for balacoon_backend to {}".format(addon_path))
 
 
 if __name__ == "__main__":
