@@ -8,11 +8,13 @@ MAX_WAV_VALUE = 32767.0
 
 class Generator(nn.Module):
     """UnivNet Generator"""
-    def __init__(self, hp, squeeze_output: bool = False, output_short: bool = False, half_precision: bool = False):
+    def __init__(self, hp, squeeze_output: bool = False, output_short: bool = False,
+                 full_precision: bool = False, skip_casts: bool = False):
         super(Generator, self).__init__()
         self.squeeze_output = squeeze_output
         self.output_short = output_short
-        self.half_precision = half_precision
+        self.full_precision = full_precision
+        self.skip_casts = skip_casts
         self.mel_channel = hp.audio.n_mel_channels
         self.noise_dim = hp.gen.noise_dim
         self.hop_length = hp.audio.hop_length
@@ -35,7 +37,7 @@ class Generator(nn.Module):
                 )
             )
        
-        padding_mode = "zeros" if self.half_precision else "reflect"
+        padding_mode = "reflect" if self.full_precision else "zeros"
         self.conv_pre = \
             nn.utils.weight_norm(nn.Conv1d(hp.gen.noise_dim, channel_size, 7, padding=3, padding_mode=padding_mode))
 
@@ -52,6 +54,10 @@ class Generator(nn.Module):
             z (Tensor): the noise sequence (batch, noise_dim, in_length)
         
         '''
+        if not self.full_precision and not self.skip_casts:
+            # cast inputs to fp16
+            c = c.type(torch.float16)
+            z = z.type(torch.float16)
         z = self.conv_pre(z)                # (B, c_g, L)
 
         for res_block in self.res_stack:

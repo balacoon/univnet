@@ -209,8 +209,10 @@ pip install -r requirements.txt
 Then simply run the tracing script. Changes to sources made to eliminate warnings.
 Warning about different outputs in traced/non-traced versions can be ignored.
 Pretrained model is used in data pre-processing, to allow biggest throughput, 
-the model is traced for GPU in half precision.
+the model is traced for GPU in half precision by default. Inputs/outputs are however
+still in full precision to ease integration. Check flags that control tracing
+process.
 
 ```bash
-CUDA_VISIBLE_DEVICES=1 python3 trace.py --ckpt univ_c32_0288.pt --cuda --out-dir traced_gpu_half/ --half
+CUDA_VISIBLE_DEVICES=1 python3 trace.py --ckpt univ_c32_0288.pt --out-dir traced_gpu_half
 ```

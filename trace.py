@@ -32,8 +32,13 @@ def parse_args():
         default="./exported",
         help="Directory to put exported files to",
     )
-    ap.add_argument("--cuda", action="store_true", help="Whether to trace on GPU")
-    ap.add_argument("--half", action="store_true", help="Whether to trace in half precision")
+    ap.add_argument("--cpu", action="store_true", help="If specified, traces on CPU rather than GPU")
+    ap.add_argument(
+        "--full-precision",
+        action="store_true",
+        help="If specified, traces in full precision, instead of half"
+    )
+    ap.add_argument("--skip-casts", action="store_true", help="If specified, omit adding type casts for input/output")
     args = ap.parse_args()
     return args
 
@@ -42,7 +47,7 @@ def main():
     args = parse_args()
     logging.basicConfig(level=logging.INFO)
     os.makedirs(args.out_dir, exist_ok=True)
-    device = torch.device("cuda" if args.cuda else "cpu")
+    device = torch.device("cpu" if args.cpu else "cuda")
 
     # load checkpoint
     loaded = torch.load(args.ckpt)
@@ -60,9 +65,10 @@ def main():
         config.audio.mel_fmax,
         center=False,
         device=device,
-        half=args.half,
+        full_precision=args.full_precision,
+        skip_casts=args.skip_casts,
     ).to(device)
-    stft = stft.half() if args.half else stft
+    stft = stft if args.full_precision else stft.half()
     stft.eval()
     logging.info("Created mel extractor")
 
@@ -76,12 +82,11 @@ def main():
         config.audio.sample_rate
     )
     audio_real = torch.tensor(
-        audio_real, device=device, dtype=torch.float
+        audio_real, device=device, dtype=torch.int16
     ).unsqueeze(
         0
     )  # (batch x samples)
-    audio_real = audio_real.cuda() if args.cuda else audio_real
-    audio_real = audio_real.half() if args.half else audio_real
+    audio_real = audio_real if args.cpu else audio_real.cuda()
     melspec_real = stft(audio_real)
     melspec_real_npy = melspec_real.cpu().detach().float().numpy()
     assert (
@@ -102,7 +107,8 @@ def main():
     logging.info("Saved traced melspec extractor to {}".format(stft_path))
 
     # create waveform generator
-    generator = Generator(config, squeeze_output=True, output_short=True, half_precision=args.half)
+    generator = Generator(config, squeeze_output=True, output_short=True,
+                          full_precision=args.full_precision, skip_casts=args.skip_casts,)
     # rename parameters to have stand-alone generator
     saved_state_dict = loaded["model_g"]
     new_state_dict = {}
@@ -114,7 +120,7 @@ def main():
             new_state_dict[k] = v
     generator.load_state_dict(new_state_dict)
     generator = generator.to(device)
-    generator = generator.half() if args.half else generator
+    generator = generator if args.full_precision else generator.half()
     generator.eval(inference=True)
     logging.info("Created audio generator")
 
